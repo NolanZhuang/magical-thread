@@ -78,8 +78,7 @@ function DrawPreview() {
 registerRenderer({ type: '__drawPreview', render: () => <DrawPreview /> });
 
 // A card may provide a nicer label (e.g. "shape-correct → Circle") by installing
-// window.__mtCardLabel. If absent, we just show the opId. This keeps features
-// decoupled: any feature can customise how its own card is labelled.
+// window.__mtCardLabel. If absent, we just show the opId.
 function cardLabel(card) {
   const fn = window.__mtCardLabel;
   return (fn && fn(card)) || card.opId;
@@ -89,7 +88,7 @@ function cardLabel(card) {
 const PANEL_W = 220;
 const PANEL_H = 400;
 
-function ThreadView({ obj, ctx }) {
+function ThreadView({ obj }) {
   const updateObject = useStore((s) => s.updateObject);
   const removeObject = useStore((s) => s.removeObject);
   const [, force] = useState(0);
@@ -101,18 +100,19 @@ function ThreadView({ obj, ctx }) {
 
   const badge = points[points.length - 1];
 
-  // Figure out the canvas size so the panel never overflows off-screen.
-  const svg = ctx?.svgRef?.current;
-  const rect = svg ? svg.getBoundingClientRect() : { width: 99999, height: 99999 };
-  const canvasW = rect.width;
-  const canvasH = rect.height;
+  // Read the real canvas box (#canvas) so the panel never leaves the canvas.
+  const canvasEl = typeof document !== 'undefined' ? document.getElementById('canvas') : null;
+  const cw = canvasEl ? canvasEl.clientWidth : 100000;
+  const ch = canvasEl ? canvasEl.clientHeight : 100000;
 
-  // Default: open to the right of the badge. If that would overflow the right
-  // edge, open to the LEFT instead. Same idea vertically.
-  const openLeft = badge.x + 14 + PANEL_W > canvasW;
-  const panelX = openLeft ? badge.x - 14 - PANEL_W : badge.x + 14;
+  // Open right by default; flip left if it would overflow the right edge.
+  const openLeft = badge.x + 14 + PANEL_W > cw;
+  let panelX = openLeft ? badge.x - 14 - PANEL_W : badge.x + 14;
+  if (panelX < 4) panelX = 4;
+
+  // Open aligned to badge top; shift up if it would overflow the bottom edge.
   let panelY = badge.y - 10;
-  if (panelY + PANEL_H > canvasH) panelY = Math.max(4, canvasH - PANEL_H - 4);
+  if (panelY + PANEL_H > ch) panelY = ch - PANEL_H - 4;
   if (panelY < 4) panelY = 4;
 
   function togglePanel() {
@@ -181,5 +181,5 @@ function ThreadView({ obj, ctx }) {
 
 registerRenderer({
   type: 'thread',
-  render: (obj, ctx) => <ThreadView obj={obj} ctx={ctx} />,
+  render: (obj) => <ThreadView obj={obj} />,
 });
