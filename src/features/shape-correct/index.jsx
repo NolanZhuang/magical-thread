@@ -2,17 +2,16 @@
 // After a thread is drawn, this op inspects the raw stroke and "beautifies" it:
 //   - close to a straight line  -> a clean straight line
 //   - close to a circle         -> a regular circle
-//   - otherwise                 -> a very smooth resampled curve
+//   - otherwise                 -> a VERY smooth curve
 //
 // It is a PIPELINE CARD inserted right after 'draw-thread'. Disable/delete it to
 // fall back to the original hand-drawn stroke (non-destructive). The detected shape
 // is stored in the card params and shown as the card label.
 //
-// Self-contained: registers a thread-op + patches the draw tool to auto-append this
-// card. It does NOT modify any existing file.
+// Self-contained: registers a thread-op + patches the store's addObject to auto-append
+// this card. It does NOT modify any existing file.
 
 import { registerThreadOp } from '../../core/threadEngine.js';
-import { registry } from '../../core/registry.js';
 import { useStore } from '../../core/store.js';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +31,7 @@ function diag(points) {
   return Math.hypot(b.w, b.h) || 1;
 }
 
-// --- Straight line: fit via total least squares, measure avg perpendicular dist ---
+// --- Straight line: total least squares, avg perpendicular distance ---
 function lineFit(points) {
   const n = points.length;
   let mx = 0, my = 0;
@@ -43,18 +42,14 @@ function lineFit(points) {
     const dx = p.x - mx, dy = p.y - my;
     sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
   }
-  // principal direction (largest eigenvector of covariance)
   const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
   const dirx = Math.cos(theta), diry = Math.sin(theta);
-  // perpendicular distances
   let err = 0;
   for (const p of points) {
     const dx = p.x - mx, dy = p.y - my;
-    const perp = Math.abs(dx * -diry + dy * dirx);
-    err += perp;
+    err += Math.abs(dx * -diry + dy * dirx);
   }
   err /= n;
-  // endpoints projected onto the line
   let tMin = Infinity, tMax = -Infinity;
   for (const p of points) {
     const t = (p.x - mx) * dirx + (p.y - my) * diry;
@@ -65,7 +60,7 @@ function lineFit(points) {
   return { err, a, b };
 }
 
-// --- Circle: algebraic (Kasa) fit, measure avg radial error ---
+// --- Circle: algebraic (Kasa) fit, avg radial error ---
 function circleFit(points) {
   const n = points.length;
   let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0;
@@ -74,28 +69,18 @@ function circleFit(points) {
     sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
     sxz += x * z; syz += y * z; sz += z;
   }
-  // solve normal equations for center (Kasa)
-  const C = [
-    [sxx, sxy, sx],
-    [sxy, syy, sy],
-    [sx, sy, n],
-  ];
-  const rhs = [sxz, syz, sz];
-  const sol = solve3(C, rhs);
+  const sol = solve3([[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]], [sxz, syz, sz]);
   if (!sol) return { err: Infinity };
   const [A, B, Cc] = sol;
   const cx = A / 2, cy = B / 2;
   const r = Math.sqrt(Math.max(0, Cc + cx * cx + cy * cy));
   let err = 0;
-  for (const p of points) {
-    err += Math.abs(Math.hypot(p.x - cx, p.y - cy) - r);
-  }
+  for (const p of points) err += Math.abs(Math.hypot(p.x - cx, p.y - cy) - r);
   err /= n;
   return { err, cx, cy, r };
 }
 
 function solve3(M, b) {
-  // Gaussian elimination for a 3x3 system
   const a = M.map((row, i) => [...row, b[i]]);
   for (let col = 0; col < 3; col++) {
     let piv = col;
@@ -111,14 +96,13 @@ function solve3(M, b) {
   return [a[0][3] / a[0][0], a[1][3] / a[1][1], a[2][3] / a[2][2]];
 }
 
-// --- how closed is the stroke? (endpoints near each other -> likely a circle) ---
 function closedness(points) {
   const a = points[0], b = points[points.length - 1];
   return Math.hypot(a.x - b.x, a.y - b.y) / diag(points); // 0 = perfectly closed
 }
 
-// --- resample n evenly-spaced points along the polyline (for smoothing) ---
-function resample(points, n = 64) {
+// --- resample n evenly-spaced points along the polyline ---
+function resample(points, n) {
   if (points.length < 2) return points;
   const dists = [0];
   for (let i = 1; i < points.length; i++) {
@@ -141,7 +125,48 @@ function resample(points, n = 64) {
   return out;
 }
 
-function makeCircle(cx, cy, r, n = 72) {
+// --- moving-average smoothing (window on each side), endpoints preserved ---
+function movingAverage(points, radius) {
+  const n = points.length;
+  if (n < 3 || radius < 1) return points;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || i === n - 1) { out[i] = points[i]; continue; } // keep endpoints
+    let sx = 0, sy = 0, count = 0;
+    const lo = Math.max(0, i - radius), hi = Math.min(n - 1, i + radius);
+    for (let j = lo; j <= hi; j++) { sx += points[j].x; sy += points[j].y; count++; }
+    out[i] = { x: sx / count, y: sy / count };
+  }
+  return out;
+}
+
+// --- Chaikin corner-cutting: each pass replaces every segment with two rounded
+//     points, quickly turning a polyline into a very smooth curve. ---
+function chaikin(points, iterations) {
+  let pts = points;
+  for (let it = 0; it < iterations; it++) {
+    if (pts.length < 3) break;
+    const out = [pts[0]]; // keep first endpoint
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i], q = pts[i + 1];
+      out.push({ x: 0.75 * p.x + 0.25 * q.x, y: 0.75 * p.y + 0.25 * q.y });
+      out.push({ x: 0.25 * p.x + 0.75 * q.x, y: 0.25 * p.y + 0.75 * q.y });
+    }
+    out.push(pts[pts.length - 1]); // keep last endpoint
+    pts = out;
+  }
+  return pts;
+}
+
+// Strong smoothing pipeline: resample -> moving-average -> Chaikin rounds -> resample.
+export function superSmooth(points) {
+  const base = resample(points, 48);           // even spacing first
+  const denoised = movingAverage(base, 2);      // knock down hand jitter
+  const rounded = chaikin(denoised, 4);         // 4 passes = very smooth corners
+  return resample(rounded, 96);                 // dense, evenly-spaced final curve
+}
+
+function makeCircle(cx, cy, r, n = 96) {
   const pts = [];
   for (let k = 0; k <= n; k++) {
     const a = (2 * Math.PI * k) / n;
@@ -152,27 +177,23 @@ function makeCircle(cx, cy, r, n = 72) {
 
 // ---------------------------------------------------------------------------
 // Detection: line -> circle -> smooth fallback
-// Thresholds are relative to the stroke's bounding-box diagonal.
 // ---------------------------------------------------------------------------
 export function detectShape(points) {
   if (!points || points.length < 3) return { shape: 'Freeform', points };
   const d = diag(points);
 
-  // 1) line?
   const lf = lineFit(points);
   if (lf.err / d < 0.03) {
     return { shape: 'Line', points: [lf.a, lf.b] };
   }
 
-  // 2) circle? (must be fairly closed AND fit well)
   const cf = circleFit(points);
   const closed = closedness(points);
   if (cf.err !== Infinity && cf.err / d < 0.06 && closed < 0.35 && cf.r / d > 0.15) {
     return { shape: 'Circle', points: makeCircle(cf.cx, cf.cy, cf.r) };
   }
 
-  // 3) smooth fallback
-  return { shape: 'Smooth', points: resample(points, 64) };
+  return { shape: 'Smooth', points: superSmooth(points) };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,9 +215,7 @@ registerThreadOp({
 });
 
 // ---------------------------------------------------------------------------
-// Auto-append this card when a new thread is drawn.
-// We wrap the store's addObject so that any freshly-created thread gets a
-// 'shape-correct' card right after 'draw-thread'. No edit to draw-thread needed.
+// Auto-append this card when a new thread is drawn (wraps store.addObject).
 // ---------------------------------------------------------------------------
 const originalAdd = useStore.getState().addObject;
 useStore.setState({
@@ -204,7 +223,6 @@ useStore.setState({
     if (obj && obj.type === 'thread' && Array.isArray(obj.data?.ops)) {
       const hasCorrect = obj.data.ops.some((c) => c.opId === 'shape-correct');
       if (!hasCorrect) {
-        // detect now so the card can be labelled with the shape
         const raw = obj.data.ops.find((c) => c.opId === 'draw-thread')?.params?.points || [];
         const { shape } = detectShape(raw);
         obj = {
@@ -224,15 +242,11 @@ useStore.setState({
 });
 
 // ---------------------------------------------------------------------------
-// Make the function-card panel show the detected shape as the card's label.
-// The draw-thread renderer shows `card.opId`; we augment the label by exposing a
-// global lookup the renderer can (optionally) use. To keep draw-thread untouched
-// yet still show the shape, we override the card's opId display via a label map.
+// Show the detected shape as the card's label in the function-card panel.
 // ---------------------------------------------------------------------------
 export const shapeCardLabel = (card) =>
   card.opId === 'shape-correct'
     ? `shape-correct → ${card.params?.detected || '?'}`
     : card.opId;
 
-// Expose so a future generic panel can use it; harmless if unused.
 window.__mtCardLabel = shapeCardLabel;
