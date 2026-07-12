@@ -10,11 +10,11 @@ export function Sidebar() {
   return (
     <div id="sidebar">
       <div id="data-store">
-        <h2>数据列</h2>
+        <h2>Data Columns</h2>
         {columns.length === 0 && (
           <div id="data-store-empty">
-            把一个 <b>.csv</b> 文件拖到右侧画布，<br />
-            每一列会变成一张可拖拽的数据卡片。
+            Drag a <b>.csv</b> file onto the canvas.<br />
+            Each column becomes a draggable data card here.
           </div>
         )}
         {columns.map((col) => (
@@ -32,7 +32,7 @@ export function Sidebar() {
             </div>
             <span
               className="col-delete"
-              title="删除"
+              title="Delete"
               style={{ cursor: 'pointer', color: '#94a3b8' }}
               onClick={() => removeObject(col.id)}
             >

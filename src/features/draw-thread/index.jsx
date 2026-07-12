@@ -25,10 +25,9 @@ export function pointsToPath(points) {
 }
 
 // --- 1. The thread-op: the first card in every thread's pipeline ---
-// It just seeds the geometry from its stored points.
 registerThreadOp({
   id: 'draw-thread',
-  label: '画 Thread',
+  label: 'Draw Thread',
   apply: (state, params) => ({
     ...state,
     geometry: { points: params.points || [] },
@@ -41,29 +40,24 @@ let pts = [];
 
 registerTool({
   id: 'draw-thread',
-  label: '✏️ 画 Thread',
+  label: '✏️ Draw Thread',
   onPointerDown: (pt) => {
     drawing = true;
     pts = [pt];
-    window.__mtDrawPreview = pts;
-    useStore.getState()._bump?.();
+    useStore.getState().setDrawPreview([...pts]);
   },
   onPointerMove: (pt) => {
     if (!drawing) return;
     const last = pts[pts.length - 1];
-    // sample: only keep points that moved a little, to avoid huge arrays
     if (!last || Math.hypot(pt.x - last.x, pt.y - last.y) > 3) {
       pts.push(pt);
-      window.__mtDrawPreview = [...pts];
-      useStore.getState()._bump?.();
+      useStore.getState().setDrawPreview([...pts]);
     }
   },
   onPointerUp: () => {
     if (!drawing) return;
     drawing = false;
-    window.__mtDrawPreview = null;
     if (pts.length >= 2) {
-      // A thread = geometry-less; the pipeline (ops) defines everything.
       const obj = makeObject('thread', {
         ops: [{ opId: 'draw-thread', params: { points: pts }, enabled: true }],
         panelOpen: false,
@@ -71,11 +65,19 @@ registerTool({
       useStore.getState().addObject(obj);
     }
     pts = [];
-    useStore.getState()._bump?.();
+    useStore.getState().setDrawPreview(null);
   },
 });
 
-// --- 3. Renderer for a Thread object ---
+// --- 3. Live dashed preview while drawing ---
+function DrawPreview() {
+  const preview = useStore((s) => s.drawPreview);
+  if (!preview || preview.length < 2) return null;
+  return <path className="thread-stroke-preview" d={pointsToPath(preview)} />;
+}
+registerRenderer({ type: '__drawPreview', render: () => <DrawPreview /> });
+
+// --- 4. Renderer for a Thread object ---
 function ThreadView({ obj }) {
   const updateObject = useStore((s) => s.updateObject);
   const removeObject = useStore((s) => s.removeObject);
@@ -86,7 +88,6 @@ function ThreadView({ obj }) {
   const points = state.geometry.points;
   if (!points.length) return null;
 
-  // badge position = last point of the curve
   const badge = points[points.length - 1];
 
   function togglePanel() {
@@ -96,7 +97,6 @@ function ThreadView({ obj }) {
   function removeCard(idx) {
     const next = ops.filter((_, i) => i !== idx);
     if (next.length === 0) {
-      // no cards left -> the thread ceases to exist
       removeObject(obj.id);
     } else {
       updateObject(obj.id, { data: { ops: next } });
@@ -112,14 +112,7 @@ function ThreadView({ obj }) {
   return (
     <g>
       <path className="thread-curve" d={pointsToPath(points)} />
-      {/* function badge */}
-      <circle
-        className="thread-badge"
-        cx={badge.x}
-        cy={badge.y}
-        r={9}
-        onClick={togglePanel}
-      />
+      <circle className="thread-badge" cx={badge.x} cy={badge.y} r={9} onClick={togglePanel} />
       <text
         x={badge.x}
         y={badge.y + 3.5}
@@ -131,12 +124,11 @@ function ThreadView({ obj }) {
         {ops.length}
       </text>
 
-      {/* the panel of function cards (rendered as a foreignObject so we can use HTML) */}
       {obj.data.panelOpen && (
         <foreignObject x={badge.x + 14} y={badge.y - 10} width={220} height={400}>
           <div className="card-panel" style={{ position: 'relative' }}>
             <div className="card-panel-header">
-              <span>功能卡片（按顺序执行）</span>
+              <span>Function Cards (run in order)</span>
               <span className="close" onClick={togglePanel}>✕</span>
             </div>
             <div className="card-panel-list">
@@ -144,13 +136,13 @@ function ThreadView({ obj }) {
                 <div key={idx} className={`op-card ${card.enabled === false ? 'disabled' : ''}`}>
                   <div>
                     <div className="op-name">{idx + 1}. {card.opId}</div>
-                    <div className="op-sub">{card.enabled === false ? '已禁用' : '启用中'}</div>
+                    <div className="op-sub">{card.enabled === false ? 'Disabled' : 'Enabled'}</div>
                   </div>
                   <div className="op-actions">
-                    <button className="op-btn" title="启用/禁用" onClick={() => toggleCard(idx)}>
+                    <button className="op-btn" title="Enable/Disable" onClick={() => toggleCard(idx)}>
                       {card.enabled === false ? '□' : '☑'}
                     </button>
-                    <button className="op-btn danger" title="删除" onClick={() => removeCard(idx)}>✕</button>
+                    <button className="op-btn danger" title="Delete" onClick={() => removeCard(idx)}>✕</button>
                   </div>
                 </div>
               ))}

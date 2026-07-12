@@ -21,7 +21,7 @@ export function Toolbar() {
         </button>
       ))}
       <span className="spacer" />
-      <span className="hint">拖入 CSV 文件 · 选工具后在画布上操作</span>
+      <span className="hint">Drag in a CSV file · Pick a tool, then draw on the canvas</span>
     </div>
   );
 }

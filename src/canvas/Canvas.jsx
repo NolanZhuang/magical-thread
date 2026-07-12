@@ -24,23 +24,32 @@ export function Canvas() {
     onPointerUp: (e) => activeTool?.onPointerUp?.(toLocal(e), toolCtx),
   };
 
+  // Objects that have a canvas renderer (columnCard has none -> stays in sidebar only).
+  const drawable = objects.filter((o) => registry.renderers.has(o.type));
+
   return (
-    <div
-      style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => activeTool?.onDrop?.(e, toolCtx) ?? window.__mtOnDrop?.(e)}
-    >
-      <svg
-        ref={svgRef}
-        width="100%"
-        height="100%"
-        style={{ background: '#fafafa', display: 'block' }}
-        {...handlers}
+    <div id="canvas-wrap">
+      <div
+        id="canvas"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => activeTool?.onDrop?.(e, toolCtx) ?? window.__mtOnDrop?.(e)}
       >
-        {objects.map((obj) => (
-          <ObjectRenderer key={obj.id} obj={obj} ctx={{ svgRef }} />
-        ))}
-      </svg>
+        {drawable.length === 0 && (
+          <div id="canvas-empty-hint">
+            <span className="big">✏️</span>
+            Pick “Draw Thread” above, then drag on the canvas to draw a thread.
+          </div>
+        )}
+        <svg id="canvas-svg" ref={svgRef} {...handlers}>
+          {drawable.map((obj) => (
+            <ObjectRenderer key={obj.id} obj={obj} ctx={{ svgRef }} />
+          ))}
+          {/* transient overlays (e.g. live drawing preview) */}
+          {registry.renderers.has('__drawPreview') && (
+            <ObjectRenderer obj={{ id: '__drawPreview', type: '__drawPreview', data: {} }} ctx={{ svgRef }} />
+          )}
+        </svg>
+      </div>
     </div>
   );
 }
