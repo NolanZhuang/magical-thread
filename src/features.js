@@ -3,3 +3,4 @@
 
 import './features/csv-import/index.jsx';
 import './features/draw-thread/index.jsx';
+import './features/shape-correct/index.jsx';
