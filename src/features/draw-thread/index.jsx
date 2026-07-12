@@ -86,7 +86,10 @@ function cardLabel(card) {
 }
 
 // --- 4. Renderer for a Thread object ---
-function ThreadView({ obj }) {
+const PANEL_W = 220;
+const PANEL_H = 400;
+
+function ThreadView({ obj, ctx }) {
   const updateObject = useStore((s) => s.updateObject);
   const removeObject = useStore((s) => s.removeObject);
   const [, force] = useState(0);
@@ -97,6 +100,20 @@ function ThreadView({ obj }) {
   if (!points.length) return null;
 
   const badge = points[points.length - 1];
+
+  // Figure out the canvas size so the panel never overflows off-screen.
+  const svg = ctx?.svgRef?.current;
+  const rect = svg ? svg.getBoundingClientRect() : { width: 99999, height: 99999 };
+  const canvasW = rect.width;
+  const canvasH = rect.height;
+
+  // Default: open to the right of the badge. If that would overflow the right
+  // edge, open to the LEFT instead. Same idea vertically.
+  const openLeft = badge.x + 14 + PANEL_W > canvasW;
+  const panelX = openLeft ? badge.x - 14 - PANEL_W : badge.x + 14;
+  let panelY = badge.y - 10;
+  if (panelY + PANEL_H > canvasH) panelY = Math.max(4, canvasH - PANEL_H - 4);
+  if (panelY < 4) panelY = 4;
 
   function togglePanel() {
     updateObject(obj.id, { data: { panelOpen: !obj.data.panelOpen } });
@@ -133,7 +150,7 @@ function ThreadView({ obj }) {
       </text>
 
       {obj.data.panelOpen && (
-        <foreignObject x={badge.x + 14} y={badge.y - 10} width={220} height={400}>
+        <foreignObject x={panelX} y={panelY} width={PANEL_W} height={PANEL_H}>
           <div className="card-panel" style={{ position: 'relative' }}>
             <div className="card-panel-header">
               <span>Function Cards (run in order)</span>
@@ -164,5 +181,5 @@ function ThreadView({ obj }) {
 
 registerRenderer({
   type: 'thread',
-  render: (obj) => <ThreadView obj={obj} />,
+  render: (obj, ctx) => <ThreadView obj={obj} ctx={ctx} />,
 });
