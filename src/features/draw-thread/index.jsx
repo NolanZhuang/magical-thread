@@ -77,6 +77,14 @@ function DrawPreview() {
 }
 registerRenderer({ type: '__drawPreview', render: () => <DrawPreview /> });
 
+// A card may provide a nicer label (e.g. "shape-correct → Circle") by installing
+// window.__mtCardLabel. If absent, we just show the opId. This keeps features
+// decoupled: any feature can customise how its own card is labelled.
+function cardLabel(card) {
+  const fn = window.__mtCardLabel;
+  return (fn && fn(card)) || card.opId;
+}
+
 // --- 4. Renderer for a Thread object ---
 function ThreadView({ obj }) {
   const updateObject = useStore((s) => s.updateObject);
@@ -135,7 +143,7 @@ function ThreadView({ obj }) {
               {ops.map((card, idx) => (
                 <div key={idx} className={`op-card ${card.enabled === false ? 'disabled' : ''}`}>
                   <div>
-                    <div className="op-name">{idx + 1}. {card.opId}</div>
+                    <div className="op-name">{idx + 1}. {cardLabel(card)}</div>
                     <div className="op-sub">{card.enabled === false ? 'Disabled' : 'Enabled'}</div>
                   </div>
                   <div className="op-actions">
