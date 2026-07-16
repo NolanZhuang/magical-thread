@@ -4,7 +4,11 @@
 // is this "draw-thread" op, which simply provides the geometry. Deleting that card
 // removes the whole thread.
 //
-// Self-contained: registers a Tool, a thread-op, and a renderer. Edits no old files.
+// The thread renderer also:
+//   - exposes a wide transparent hit-area along the curve (so other features, e.g.
+//     bind-data, can accept drops onto the thread), and
+//   - renders any data points that upstream ops (e.g. bind-data) placed in
+//     state.rows via a pluggable list of "thread layers".
 
 import React, { useState } from 'react';
 import { line, curveCatmullRom } from 'd3-shape';
@@ -22,6 +26,23 @@ export function pointsToPath(points) {
     return `M ${p.x} ${p.y} L ${p.x + 0.1} ${p.y}`;
   }
   return pathGen(points);
+}
+
+// --- Pluggable thread layers -------------------------------------------------
+// A feature can draw extra things on top of a thread (data points, anchors, etc.)
+// by registering a layer here. Each layer is a React component that receives
+// { obj, state, points }. This keeps draw-thread from needing to know about
+// bind-data or any future feature.
+const threadLayers = [];
+export function registerThreadLayer(Component) {
+  threadLayers.push(Component);
+}
+
+// A feature can also install a drop handler for when a data column is dropped
+// onto a thread. Signature: (obj, columnId) => void. First one that handles wins.
+const threadDropHandlers = [];
+export function registerThreadDropHandler(fn) {
+  threadDropHandlers.push(fn);
 }
 
 // --- 1. The thread-op: the first card in every thread's pipeline ---
@@ -92,6 +113,7 @@ function ThreadView({ obj }) {
   const updateObject = useStore((s) => s.updateObject);
   const removeObject = useStore((s) => s.removeObject);
   const [, force] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
 
   const ops = obj.data.ops || [];
   const state = runPipeline(ops);
@@ -105,12 +127,9 @@ function ThreadView({ obj }) {
   const cw = canvasEl ? canvasEl.clientWidth : 100000;
   const ch = canvasEl ? canvasEl.clientHeight : 100000;
 
-  // Open right by default; flip left if it would overflow the right edge.
   const openLeft = badge.x + 14 + PANEL_W > cw;
   let panelX = openLeft ? badge.x - 14 - PANEL_W : badge.x + 14;
   if (panelX < 4) panelX = 4;
-
-  // Open aligned to badge top; shift up if it would overflow the bottom edge.
   let panelY = badge.y - 10;
   if (panelY + PANEL_H > ch) panelY = ch - PANEL_H - 4;
   if (panelY < 4) panelY = 4;
@@ -134,9 +153,40 @@ function ThreadView({ obj }) {
     force((n) => n + 1);
   }
 
+  function onDrop(e) {
+    const columnId = e.dataTransfer.getData('application/mt-column');
+    setDragOver(false);
+    if (!columnId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    for (const fn of threadDropHandlers) {
+      if (fn(obj, columnId)) break;
+    }
+  }
+
+  const pathD = pointsToPath(points);
+
   return (
     <g>
-      <path className="thread-curve" d={pointsToPath(points)} />
+      {/* wide transparent hit-area for dropping data columns onto the thread */}
+      <path
+        d={pathD}
+        fill="none"
+        stroke="#000"
+        strokeOpacity={dragOver ? 0.08 : 0}
+        strokeWidth={22}
+        strokeLinecap="round"
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+      />
+      <path className="thread-curve" d={pathD} style={{ pointerEvents: 'none' }} />
+
+      {/* feature layers (e.g. bind-data data points) */}
+      {threadLayers.map((Layer, i) => (
+        <Layer key={i} obj={obj} state={state} points={points} />
+      ))}
+
       <circle className="thread-badge" cx={badge.x} cy={badge.y} r={9} onClick={togglePanel} />
       <text
         x={badge.x}
