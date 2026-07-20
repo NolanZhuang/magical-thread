@@ -4,3 +4,6 @@
 import './features/csv-import/index.jsx';
 import './features/draw-thread/index.jsx';
 import './features/shape-correct/index.jsx';
+import './features/bind-data/index.jsx';
+import './features/select-data/index.jsx';
+import './features/move-point/index.jsx';

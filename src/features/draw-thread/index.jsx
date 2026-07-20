@@ -120,7 +120,11 @@ function ThreadView({ obj }) {
   const points = state.geometry.points;
   if (!points.length) return null;
 
-  const badge = points[points.length - 1];
+  const endPt = points[points.length - 1];
+  // Offset the badge to the lower-right of the thread endpoint so it never
+  // covers the last data point sitting exactly on the curve's end.
+  const BADGE_OFFSET = 16;
+  const badge = { x: endPt.x + BADGE_OFFSET, y: endPt.y + BADGE_OFFSET };
 
   // Read the real canvas box (#canvas) so the panel never leaves the canvas.
   const canvasEl = typeof document !== 'undefined' ? document.getElementById('canvas') : null;
@@ -186,6 +190,18 @@ function ThreadView({ obj }) {
       {threadLayers.map((Layer, i) => (
         <Layer key={i} obj={obj} state={state} points={points} />
       ))}
+
+      {/* thin connector from the curve end to the offset badge (visual cue) */}
+      <line
+        x1={endPt.x}
+        y1={endPt.y}
+        x2={badge.x}
+        y2={badge.y}
+        stroke="#a855f7"
+        strokeWidth={1}
+        strokeOpacity={0.5}
+        style={{ pointerEvents: 'none' }}
+      />
 
       <circle className="thread-badge" cx={badge.x} cy={badge.y} r={9} onClick={togglePanel} />
       <text
